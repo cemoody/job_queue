@@ -1,7 +1,9 @@
 import math
 import os.path
 from dataclasses import dataclass
+from select import kevent
 from typing import Callable
+from uuid import uuid4
 
 from loguru import logger
 
@@ -38,8 +40,8 @@ class JobQueue:
 
     def link(self, taskq_kwargs={}, **kwargs):
         def wrapper(inner_func):
-            name = inner_func.__name__
-            q = IOQueues(self.fn_q, name=name, **kwargs)
+            name = kwargs.get('name', getattr(inner_func, '__name__', uuid4()))
+            q = IOQueues(self.fn_q, **kwargs)
             tasks = SQLiteAckQueue(self.fn_tasks, table_name=f"tasks_{name}", **taskq_kwargs)
 
             def func(task_id, **kwargs):
