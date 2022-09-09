@@ -1,7 +1,6 @@
 import math
 import os.path
 from dataclasses import dataclass
-from select import kevent
 from typing import Callable
 from uuid import uuid4
 
