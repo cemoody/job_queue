@@ -9,17 +9,19 @@ and automatically read and write to input and output queues.
 You can install _IOQueue_ via [pip] from [PyPI]:
 
 ```console
-$ pip install io_queue
+$ pip install job_queue
 ```
 
 ## Usage
 
 ```python
-l = Linker(fn)
+from job_queue import JobQueue
 
-@l.link(input_q_name="urls", output_q_name="links", batch_size=batch_size)
-def crawler(items, **cfg):
-    logger.info(f"Processing {len(urls)} items {cfg} ")
+jq  = JobQueue()
+
+
+@jq.link(input_q_name="urls", output_q_name="links", batch_size=64)
+def crawler(items, **env):
     links = []
     for item in items:
         url = item['url']
@@ -27,32 +29,23 @@ def crawler(items, **cfg):
         links.append({'link': f"{url}/b.html", **item})
     return links
 
-@l.link(input_q_name="links", output_q_name="vecs", batch_size=batch_size)
+@jq.link(input_q_name="links", output_q_name="vecs", batch_size=128)
 def transform(items, **cfg):
-    logger.info(f"Processing {len(items)} links {cfg}")
     vectors = []
     for item in items:
         vectors.append({'vector': [1, 2, 3], **item})
     return vectors
 
-@l.link(input_q_name="vecs", output_q_name="mean_vec", batch_size=10000)
-def sum_vector(items, **cfg):
-    import numpy as np
-    vecs = [item['vector'] for item in items]
-    logger.info(f"Processing {len(vecs)} vecs {cfg}")
-    if len(vecs) == 0:
-        return []
-    sum = float(np.concatenate(vecs).sum())
-    rows = [dict(sum_vector=sum)]
-    return rows
-
 # Load up the DAG with initial data
-urls = [dict(url=f"{idx}.com") for idx in range(n)]
-l.links['crawler'].set_inputs(urls)
+urls = [dict(url=f"{idx}.com") for idx in range(256)]
+jq.links['crawler'].set_inputs(urls)
 
 # Run until all links report there's no more data
 # left to process
-l.run_until_complete()
+jq.run_until_complete()
+
+outputs = jq.links['transform'].get_outputs(1000)
+print(outputs)
 ```
 
 ## License
