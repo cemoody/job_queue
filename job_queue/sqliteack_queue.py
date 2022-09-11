@@ -145,6 +145,8 @@ class SQLiteAckQueue:
     last_timeout_application = 0
     serializer = json
     do_debug = False
+    created = False
+    initialized = False
 
     def __init__(
         self,
@@ -163,23 +165,31 @@ class SQLiteAckQueue:
         self.delete_on_ack = delete_on_ack
         self.serializer = serializer
         self.verbose = verbose
+        self.unique_column = unique_column 
         if table_name:
             self._TABLE_NAME = table_name
+    
+    def initialize(self):
+        unique_column = self.unique_column
         self.sql = self._SQL_CREATE_UNIQUE if unique_column else self._SQL_CREATE
-        self.con.execute(
+        if self._con is None:
+            self._con = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+        self._con.execute(
             self.sql.format(table_name=self._TABLE_NAME, key_column=self._KEY_COLUMN,
                             unique_column=unique_column)
         )
         self.columns = self.read_columns()
         if unique_column and unique_column not in self.columns:
             self.columns.append(unique_column)
-        self.con.commit()
+        self._con.commit()
+        self.initialized = True
 
     @property
     def con(self):
         self.apply_timeout()
         if self._con is None:
             self._con = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+            self.initialize()
         return self._con
     
     def execute(self, *args, **kwargs):

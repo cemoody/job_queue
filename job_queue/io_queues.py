@@ -4,6 +4,7 @@ queue and offers a simple way to track jobs finished, failed or complete
 as they get places into the output queue.
 
 """
+from mimetypes import init
 import os
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ class IOQueues:
      AND {input_q_name}.status < %s
      LIMIT {batch_size}
     """ % (AckStatus.unack)
+    initialized = False
 
     def __init__(self, filename, input_q_name=None, output_q_name=None, 
                  input_q_id_column=None,
@@ -49,23 +51,36 @@ class IOQueues:
         self.output_q_id_column = output_q_id_column or "_id"
         self.name = name
     
+    def initialize(self):
+        if self.initialized:
+            return 
+        if self.input_q is not None:
+            self.input_q.initialize()
+        if self.output_q is not None:
+            self.output_q.initialize()
+        self.initialized = True
+    
     def acks(self, keys):
+        self.initialize()
         self.input_q.acks(keys)
     
     def load(self, rows):
         """ Place data rows in the output queue.
         """
+        self.initialize()
         self.input_q.puts(rows)
 
     def puts(self, rows):
         """ Place data rows in the output queue.
         """
+        self.initialize()
         self.output_q.puts(rows)
 
     def gets(self, batch_size=None, return_keys=False):
         """ Get an interator over batches from the input queue
         that are not in the output q.
         """
+        self.initialize()
         if batch_size is None:
             batch_size = self.batch_size
         if self.input_q is None:
@@ -94,6 +109,7 @@ class IOQueues:
         """ Estimate how many rows are in input q that are not 
         in the output q and also not in submitted and ongoing jobs.
         """
+        self.initialize()
         if self.input_q is None:
             return 0
         query = self._SQL_SIZE_DELTA.format(
