@@ -179,7 +179,7 @@ class SQLiteAckQueue:
                             unique_column=unique_column)
         )
         self.columns = self.read_columns()
-        if unique_column and unique_column not in self.columns:
+        if unique_column is not None and unique_column not in self.columns:
             self.columns.append(unique_column)
         self._con.commit()
         self.initialized = True
@@ -195,7 +195,10 @@ class SQLiteAckQueue:
     def execute(self, *args, **kwargs):
         if self.verbose:
             logger.debug(f"Query: args[0]")
-        return self.con.execute(*args, **kwargs)
+        ret = self.con.execute(*args, **kwargs)
+        if self.verbose:
+            logger.debug(f"Returned: ", ret)
+        return ret
 
     def get(self):
         return self.gets(1)
