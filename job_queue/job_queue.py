@@ -1,4 +1,5 @@
 import math
+import sqlite3
 import os.path
 from dataclasses import dataclass
 from typing import Callable
@@ -6,9 +7,14 @@ from uuid import uuid4
 
 from loguru import logger
 
-from job_queue.io_queues import IOQueues
-from job_queue.sqliteack_queue import AckStatus
-from job_queue.sqliteack_queue import SQLiteAckQueue
+try:
+    from .io_queues import IOQueues
+    from .sqliteack_queue import AckStatus
+    from .sqliteack_queue import SQLiteAckQueue
+except ImportError:
+    from io_queues import IOQueues
+    from sqliteack_queue import AckStatus
+    from sqliteack_queue import SQLiteAckQueue
 
 
 def submit_func_default(func, task_id, **kwargs):
@@ -32,14 +38,19 @@ class JobQueue:
     links = {}
     _task_count = {}
 
-    def __init__(self, fn_q="queues.db", fn_tasks="tasks.db", submit_func=submit_func_default):
+    def __init__(self, fn_q="queues.db", fn_tasks="tasks.db", submit_func=submit_func_default, verbose=True):
         self.fn_q = fn_q
         self.fn_tasks = fn_tasks
         self.submit_func = submit_func
+        self.verbose = verbose
+        if verbose:
+            logger.info(f"Running on SQLite version {sqlite3.sqlite_version}")
 
     def link(self, taskq_kwargs={}, **kwargs):
         def wrapper(inner_func):
             name = kwargs.get('name', getattr(inner_func, '__name__', uuid4()))
+            queue_kwargs = kwargs.get('queue_kwargs', {})
+            queue_kwargs['verbose'] = queue_kwargs.get('verbose', self.verbose)
             q = IOQueues(self.fn_q, **kwargs)
             tasks = SQLiteAckQueue(self.fn_tasks, table_name=f"tasks_{name}", **taskq_kwargs)
 

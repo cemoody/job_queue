@@ -131,12 +131,14 @@ class SQLiteAckQueue:
         delete_on_ack=False,
         serializer=json,
         table_name=None,
+        verbose=False
     ):
         self.timeout = timeout
         self.path = path
         self.max_size = max_size
         self.delete_on_ack = delete_on_ack
         self.serializer = serializer
+        self.verbose = verbose
         if table_name:
             self._TABLE_NAME = table_name
         self.sql = self._SQL_CREATE_UNIQUE if unique_column else self._SQL_CREATE
@@ -155,6 +157,11 @@ class SQLiteAckQueue:
         if self._con is None:
             self._con = sqlite3.connect(self.path)
         return self._con
+    
+    def execute(self, *args, **kwargs):
+        if self.verbose:
+            logger.debug(f"Query: args[0]")
+        return self.con.execute(*args, **kwargs)
 
     def get(self):
         return self.gets(1)
@@ -193,7 +200,7 @@ class SQLiteAckQueue:
             limit=n,
             offset=offset,
         )
-        cursor = self.con.execute(qwhere)
+        cursor = self.execute(qwhere)
         rows = list(cursor.fetchall())
         return rows
 
@@ -220,7 +227,7 @@ class SQLiteAckQueue:
                                              table_columns=cols_str,
                                              table_values=vals_str,
                                              key_column=self._KEY_COLUMN)
-            cursor = self.con.execute(insert, item)
+            cursor = self.execute(insert, item)
             ret = cursor.fetchone()
             if ret is not None:
                 key, = ret
@@ -280,7 +287,7 @@ class SQLiteAckQueue:
         else:
             v_type = "TEXT"
         query = self._SQL_CREATE_COLUMN.format(table_name=self._TABLE_NAME, column_name=name, column_type=v_type) 
-        self.con.execute(query)
+        self.execute(query)
         self.columns.append(name)
 
     def reorder_to_match_table_schema(self, rows):
@@ -294,7 +301,7 @@ class SQLiteAckQueue:
         return new_rows
 
     def read_columns(self):
-        cursor = self.con.execute(self._SQL_READ_COLUMNS.format(table_name=self._TABLE_NAME))
+        cursor = self.execute(self._SQL_READ_COLUMNS.format(table_name=self._TABLE_NAME))
         rows = cursor.fetchall()
         column_names = [row[1] for row in rows]
         column_names = [n for n in column_names if n not in ("_id", "timestamp", "status")]
@@ -322,7 +329,7 @@ class SQLiteAckQueue:
             status=status,
             indices=indices,
         )
-        cursor = self.con.execute(qupdat)
+        cursor = self.execute(qupdat)
         rows = cursor.fetchall()
         if len(rows) != len(keys):
             raise KeyError("Could not update all keys")
@@ -342,7 +349,7 @@ class SQLiteAckQueue:
                                                          row_id_val=row_id_val,
                                                          column_name=column_name,
                                                          column_value=column_value)
-                cursor = self.con.execute(qry)
+                cursor = self.execute(qry)
                 rows = cursor.fetchall()
                 assert len(rows) == 1, f"Did not find row for {row_id_col}={row_id_val}"
 
@@ -353,7 +360,7 @@ class SQLiteAckQueue:
             key_column=self._KEY_COLUMN,
             indices=indices,
         )
-        self.con.execute(qdel)
+        self.execute(qdel)
         self.con.commit()
 
     def acks(self, keys, status=AckStatus.acked):
@@ -384,19 +391,19 @@ class SQLiteAckQueue:
             logger.debug(f"Finished recycling messages at {self.last_timeout_application}")
 
     def free(self):
-        cursor = self.con.execute(self._SQL_FREE.format(table_name=self._TABLE_NAME))
+        cursor = self.execute(self._SQL_FREE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
         return n
 
     def done(self):
-        cursor = self.con.execute(self._SQL_DONE.format(table_name=self._TABLE_NAME))
+        cursor = self.execute(self._SQL_DONE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
         return n
 
     def active(self):
-        cursor = self.con.execute(self._SQL_ACTIVE.format(table_name=self._TABLE_NAME))
+        cursor = self.execute(self._SQL_ACTIVE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
         return n
@@ -406,7 +413,7 @@ class SQLiteAckQueue:
         return self._count()
 
     def _count(self):
-        cursor = self.con.execute(self._SQL_COUNT.format(table_name=self._TABLE_NAME))
+        cursor = self.execute(self._SQL_COUNT.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         return n
     

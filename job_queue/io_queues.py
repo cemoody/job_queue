@@ -7,8 +7,12 @@ as they get places into the output queue.
 import os
 from uuid import uuid4
 
-from job_queue.sqliteack_queue import AckStatus
-from job_queue.sqliteack_queue import SQLiteAckQueue
+try:
+    from .sqliteack_queue import AckStatus
+    from .sqliteack_queue import SQLiteAckQueue
+except ImportError:
+    from sqliteack_queue import AckStatus
+    from sqliteack_queue import SQLiteAckQueue
 
 class IOQueues:
     _SQL_SIZE_DELTA = """
