@@ -1,15 +1,39 @@
 import os
+import io
 import json
 import math
 import time
-import sqlite3
 import random
+import sqlite3
+import numpy as np
 import cachetools.func
 
 from loguru import logger
 
 # Modeled after persist-queue
 # https://github.com/peter-wangxu/persist-queue
+
+
+def adapt_array(arr):
+    """
+    http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
+    """
+    out = io.BytesIO()
+    np.save(out, arr)
+    out.seek(0)
+    return sqlite3.Binary(out.read())
+
+def convert_array(text):
+    out = io.BytesIO(text)
+    out.seek(0)
+    return np.load(out)
+
+
+# Converts np.array to TEXT when inserting
+sqlite3.register_adapter(np.ndarray, adapt_array)
+
+# Converts TEXT to np.array when selecting
+sqlite3.register_converter("ARRAY", convert_array)
 
 
 class AckStatus(object):
@@ -155,7 +179,7 @@ class SQLiteAckQueue:
     def con(self):
         self.apply_timeout()
         if self._con is None:
-            self._con = sqlite3.connect(self.path)
+            self._con = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
         return self._con
     
     def execute(self, *args, **kwargs):
@@ -284,6 +308,8 @@ class SQLiteAckQueue:
             v_type = "INTEGER"
         elif isinstance(value, dict):
             raise ValueError("Cannot have nested dictionaries")
+        elif isinstance(value, np.ndarray):
+            v_type = "ARRAY"
         else:
             v_type = "TEXT"
         query = self._SQL_CREATE_COLUMN.format(table_name=self._TABLE_NAME, column_name=name, column_type=v_type) 
@@ -524,6 +550,20 @@ def test_vec():
     os.remove('temp.db')
 
 
+def test_np():
+    if os.path.exists("temp.db"):
+        os.remove("temp.db")
+
+    # Initialized queue should be zero sized
+    q = SQLiteAckQueue("temp.db", unique_column="id")
+    # Auto expand vectors into many columns
+    q.puts([{'vec': np.arange(8)}])
+    row, = q.gets(1)
+    assert sum(row['vec']) == 28
+    os.remove('temp.db')
+
+
 if __name__ == "__main__":
+    test_np()
     test_vec()
     test()
