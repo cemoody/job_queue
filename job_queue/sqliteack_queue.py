@@ -170,6 +170,8 @@ class SQLiteAckQueue:
             self._TABLE_NAME = table_name
     
     def initialize(self):
+        if self.initialized:
+            return
         unique_column = self.unique_column
         self.sql = self._SQL_CREATE_UNIQUE if unique_column else self._SQL_CREATE
         if self._con is None:
@@ -178,7 +180,7 @@ class SQLiteAckQueue:
             self.sql.format(table_name=self._TABLE_NAME, key_column=self._KEY_COLUMN,
                             unique_column=unique_column)
         )
-        self.columns = self.read_columns()
+        self.columns = self._read_columns()
         if unique_column is not None and unique_column not in self.columns:
             self.columns.append(unique_column)
         self._con.commit()
@@ -186,7 +188,7 @@ class SQLiteAckQueue:
 
     @property
     def con(self):
-        self.apply_timeout()
+        self._apply_timeout()
         if self._con is None:
             self._con = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
             self.initialize()
@@ -205,6 +207,7 @@ class SQLiteAckQueue:
 
     def gets(self, n, random_offset=False, ack=True, return_keys=False,
              read_all=False):
+        self.initialize()
         offset = 0
         if random_offset:
             offset = random.randint(0, n * 100)
@@ -228,6 +231,7 @@ class SQLiteAckQueue:
         return items
 
     def select(self, n, offset=0, read_all=False):
+        self.initialize()
 
         qwhere = self._SQL_SELECT_ALL if read_all else self._SQL_SELECT
         qwhere = qwhere.format(
@@ -246,16 +250,17 @@ class SQLiteAckQueue:
         return key
 
     def puts(self, items):
+        self.initialize()
         if len(items) == 0:
             return []
         if not all(isinstance(i, dict) for i in items):
             raise ValueError("Items must be dicts")
         if not all(len(i) > 0 for i in items):
             raise ValueError("Dicts cannot be empty")
-        self.max_size_block()
+        self._max_size_block()
         items = self.flatten_array_columns(items)
-        self.update_table_schema(items[0])
-        items = self.reorder_to_match_table_schema(items)
+        self._update_table_schema(items[0])
+        items = self._reorder_to_match_table_schema(items)
         cols_str = ", ".join(self.columns)
         vals_str = ", ".join("?" for _ in self.columns)
         keys = []
@@ -306,13 +311,13 @@ class SQLiteAckQueue:
             new_items.append(new_item)
         return new_items
 
-    def update_table_schema(self, row):
+    def _update_table_schema(self, row):
         """ Update table schema """
         for k, v in row.items():
             if k not in self.columns:
-                self.create_column(k, v)
+                self._create_column(k, v)
     
-    def create_column(self, name, value):
+    def _create_column(self, name, value):
         if isinstance(value, str):
             v_type = "TEXT"
         elif isinstance(value, float):
@@ -329,7 +334,7 @@ class SQLiteAckQueue:
         self.execute(query)
         self.columns.append(name)
 
-    def reorder_to_match_table_schema(self, rows):
+    def _reorder_to_match_table_schema(self, rows):
         new_rows = []
         for i, row in enumerate(rows):
             new_row = [time.time()]
@@ -339,14 +344,14 @@ class SQLiteAckQueue:
             new_rows.append(new_row)
         return new_rows
 
-    def read_columns(self):
+    def _read_columns(self):
         cursor = self.execute(self._SQL_READ_COLUMNS.format(table_name=self._TABLE_NAME))
         rows = cursor.fetchall()
         column_names = [row[1] for row in rows]
         column_names = [n for n in column_names if n not in ("_id", "timestamp", "status")]
         return column_names
 
-    def max_size_block(self):
+    def _max_size_block(self):
         """ Block the main thread until the count in the table
         decreases.
         """
@@ -361,6 +366,7 @@ class SQLiteAckQueue:
                 logger.info(f"Finished waiting after {i} sec")
 
     def updates(self, keys, status=AckStatus.unack):
+        self.initialize()
         indices = ",".join((str(r) for r in keys))
         qupdat = self._SQL_MARK_ACK_UPDATE.format(
             table_name=self._TABLE_NAME,
@@ -378,11 +384,12 @@ class SQLiteAckQueue:
         return self.sets([row_key_dict], [field_dict])
  
     def sets(self, row_key_dicts, field_dicts):
+        self.initialize()
         for row_key_dict, field_dict in zip(row_key_dicts, field_dicts):
             (row_id_col, row_id_val), = list(row_key_dict.items())
             for column_name, column_value in field_dict.items():
                 if column_name not in self.columns:
-                    self.create_column(column_name, column_value)
+                    self._create_column(column_name, column_value)
                 qry = self._SQL_UPDATE_SINGLE_ROW.format(table_name=self._TABLE_NAME,
                                                          row_id_col=row_id_col,
                                                          row_id_val=row_id_val,
@@ -393,6 +400,7 @@ class SQLiteAckQueue:
                 assert len(rows) == 1, f"Did not find row for {row_id_col}={row_id_val}"
 
     def delete(self, keys):
+        self.initialize()
         indices = ",".join((str(r) for r in keys))
         qdel = self._SQL_DELETE.format(
             table_name=self._TABLE_NAME,
@@ -407,7 +415,7 @@ class SQLiteAckQueue:
         if self.delete_on_ack:
             self.delete(keys)
 
-    def apply_timeout(self):
+    def _apply_timeout(self):
         # Chane unack to ready
         # Don't apply time out if connection isnt open yet
         if self._con is None:
@@ -430,18 +438,21 @@ class SQLiteAckQueue:
             logger.debug(f"Finished recycling messages at {self.last_timeout_application}")
 
     def free(self):
+        self.initialize()
         cursor = self.execute(self._SQL_FREE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
         return n
 
     def done(self):
+        self.initialize()
         cursor = self.execute(self._SQL_DONE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
         return n
 
     def active(self):
+        self.initialize()
         cursor = self.execute(self._SQL_ACTIVE.format(table_name=self._TABLE_NAME))
         (n,) = cursor.fetchone()
         self.con.commit()
@@ -457,13 +468,8 @@ class SQLiteAckQueue:
         return n
     
     def count(self):
+        self.initialize()
         return self._count()
-
-    def clear_acked_data(self):
-        pass
-
-    def shrink_disk_usage(self):
-        pass
 
 
 def test():
@@ -576,7 +582,45 @@ def test_np():
     os.remove('temp.db')
 
 
+def test_real_data():
+    if os.path.exists("temp.db"):
+        os.remove("temp.db")
+
+    items = [
+        {'shopify_id': 6881964425309, 
+         'domain': 'www.farmrio.com', 
+         'shop_description': "Shop FARM Rio, Brazil’s beloved women's clothing & lifestyle brand. Free shipping on orders above $50 + free returns. Printed dresses, bottoms, tops & more!", 
+         'product_image': 'https://cdn.shopify.com/s/files/1/0077/6673/6963/products/301795_01.jpg?v=1660240205', 
+         'product_title': 'Black Flower Garden Organic Cotton Mini Dress', 
+         'product_type': 'Dresses', 
+         'product_title_umap': np.array([  6.9717116, -12.974599 ], dtype=np.float32), 
+         'product_type_umap': np.array([-13.280279,  12.3995  ], dtype=np.float32), 
+         'shop_description_umap': np.array([10.05782 ,  6.426944], dtype=np.float32), 
+         'mixed_umap': np.array([  4.6861753, -13.146825 ], dtype=np.float32)},
+        {'shopify_id': 6881964425310, 
+         'domain': 'www.farmrio.com', 
+         'shop_description': "Shop FARM Rio, Brazil’s beloved women's clothing & lifestyle brand. Free shipping on orders above $50 + free returns. Printed dresses, bottoms, tops & more!", 
+         'product_image': 'https://cdn.shopify.com/s/files/1/0077/6673/6963/products/301795_01.jpg?v=1660240205', 
+         'product_title': 'Black Flower Garden Organic Cotton Mini Dress', 
+         'product_type': 'Dresses', 
+         'product_title_umap': np.array([  6.9717116, -12.974599 ], dtype=np.float32), 
+         'product_type_umap': np.array([-13.280279,  12.3995  ], dtype=np.float32), 
+         'shop_description_umap': np.array([10.05782 ,  6.426944], dtype=np.float32), 
+         'mixed_umap': np.array([  4.6861753, -13.146825 ], dtype=np.float32)}
+    ]
+
+    # Initialized queue should be zero sized
+    q = SQLiteAckQueue("temp.db", unique_column="id")
+    # Auto expand vectors into many columns
+    q.puts(items)
+    row, = q.gets(1)
+    assert row['shopify_id'] == 6881964425309
+    os.remove('temp.db')
+
+
+
 if __name__ == "__main__":
+    test_real_data()
     test_np()
     test_vec()
     test()
