@@ -11,7 +11,7 @@ try:
     from .io_queues import IOQueues
     from .sqliteack_queue import AckStatus
     from .sqliteack_queue import SQLiteAckQueue
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     from io_queues import IOQueues
     from sqliteack_queue import AckStatus
     from sqliteack_queue import SQLiteAckQueue
@@ -29,7 +29,7 @@ class Link:
 
     def set_inputs(self, rows):
         return self.ioqueues.input_q.puts(rows)
-    
+
     def get_outputs(self, n):
         return self.ioqueues.output_q.gets(n)
 
@@ -38,7 +38,13 @@ class JobQueue:
     links = {}
     _task_count = {}
 
-    def __init__(self, fn_q="queues.db", fn_tasks="tasks.db", submit_func=submit_func_default, verbose=True):
+    def __init__(
+        self,
+        fn_q="queues.db",
+        fn_tasks="tasks.db",
+        submit_func=submit_func_default,
+        verbose=True,
+    ):
         self.fn_q = fn_q
         self.fn_tasks = fn_tasks
         self.submit_func = submit_func
@@ -48,11 +54,13 @@ class JobQueue:
 
     def link(self, taskq_kwargs={}, **kwargs):
         def wrapper(inner_func):
-            name = kwargs.get('name', getattr(inner_func, '__name__', uuid4()))
-            queue_kwargs = kwargs.get('queue_kwargs', {})
-            queue_kwargs['verbose'] = queue_kwargs.get('verbose', self.verbose)
+            name = kwargs.get("name", getattr(inner_func, "__name__", uuid4()))
+            queue_kwargs = kwargs.get("queue_kwargs", {})
+            queue_kwargs["verbose"] = queue_kwargs.get("verbose", self.verbose)
             q = IOQueues(self.fn_q, **kwargs)
-            tasks = SQLiteAckQueue(self.fn_tasks, table_name=f"tasks_{name}", **taskq_kwargs)
+            tasks = SQLiteAckQueue(
+                self.fn_tasks, table_name=f"tasks_{name}", **taskq_kwargs
+            )
 
             def func(task_id, **kwargs):
                 tasks.acks([task_id])
@@ -67,6 +75,7 @@ class JobQueue:
 
             self.links[name] = Link(q, func, tasks)
             return func
+
         return wrapper
 
     def run_once(self):
@@ -77,7 +86,7 @@ class JobQueue:
             while n_tasks_required >= n_tasks_active:
                 self.create_task(name, link)
                 n_tasks_active += 1
-    
+
     def run_until_complete(self, **kwargs):
         while not self._check_complete():
             self.run_once(**kwargs)
@@ -90,7 +99,7 @@ class JobQueue:
 
     def create_task(self, name, link):
         task_id = self._task_count.get(name, 0)
-        task_cfg = {'task_index': task_id}
+        task_cfg = {"task_index": task_id}
         logger.info(f"Creating task {task_id} for {name}")
         key = link.tasks.put(task_cfg)
         self.submit_func(link.function, key, **task_cfg)
@@ -99,10 +108,10 @@ class JobQueue:
 
 def test_ioq_simple(n=25):
     for batch_size in [1, 7]:
-        fn = 'tasks.db'
+        fn = "tasks.db"
         if os.path.exists(fn):
             os.remove(fn)
-        fn = 'queues.db'
+        fn = "queues.db"
         if os.path.exists(fn):
             os.remove(fn)
 
@@ -111,30 +120,30 @@ def test_ioq_simple(n=25):
         @l.link(input_q_name="inq", output_q_name="outq", batch_size=batch_size)
         def transform(items, **cfg):
             logger.info(f"Processing {len(items)} items {cfg}")
-            idxs = [{'out': item['idx'] + 50, **item} for item in items]
+            idxs = [{"out": item["idx"] + 50, **item} for item in items]
             return idxs
 
         # Load up the DAG with initial data
         inputs = [dict(idx=idx) for idx in range(n)]
-        l.links['transform'].set_inputs(inputs)
-        
+        l.links["transform"].set_inputs(inputs)
+
         # Run until all links report there's no more data
         # left to process
         l.run_until_complete()
 
         # Check outputs are what we expected
-        items = l.links['transform'].get_outputs(100)
-        flat = [item['out'] for item in items]
+        items = l.links["transform"].get_outputs(100)
+        flat = [item["out"] for item in items]
         assert all(k in flat for k in range(50, 75))
         os.remove("tasks.db")
         os.remove("queues.db")
 
 
 def test_ioq_complex(n=5, batch_size=10):
-    fn = 'tasks.db'
+    fn = "tasks.db"
     if os.path.exists(fn):
         os.remove(fn)
-    fn = 'queues.db'
+    fn = "queues.db"
     if os.path.exists(fn):
         os.remove(fn)
 
@@ -145,9 +154,9 @@ def test_ioq_complex(n=5, batch_size=10):
         logger.info(f"Processing {len(urls)} items {cfg} ")
         links = []
         for item in items:
-            url = item['url']
-            links.append({'link': f"{url}/a.html", **item})
-            links.append({'link': f"{url}/b.html", **item})
+            url = item["url"]
+            links.append({"link": f"{url}/a.html", **item})
+            links.append({"link": f"{url}/b.html", **item})
         return links
 
     @l.link(input_q_name="links", output_q_name="vecs", batch_size=batch_size)
@@ -155,13 +164,14 @@ def test_ioq_complex(n=5, batch_size=10):
         logger.info(f"Processing {len(items)} links {cfg}")
         vectors = []
         for item in items:
-            vectors.append({'vector': [1, 2, 3], **item})
+            vectors.append({"vector": [1, 2, 3], **item})
         return vectors
 
     @l.link(input_q_name="vecs", output_q_name="mean_vec", batch_size=10000)
     def sum_vector(items, **cfg):
         import numpy as np
-        vecs = [item['vector'] for item in items]
+
+        vecs = [item["vector"] for item in items]
         logger.info(f"Processing {len(vecs)} vecs {cfg}")
         if len(vecs) == 0:
             return []
@@ -171,18 +181,19 @@ def test_ioq_complex(n=5, batch_size=10):
 
     # Load up the DAG with initial data
     urls = [dict(url=f"{idx}.com") for idx in range(n)]
-    l.links['crawler'].set_inputs(urls)
-    
+    l.links["crawler"].set_inputs(urls)
+
     # Run until all links report there's no more data
     # left to process
     l.run_until_complete()
 
     # Check outputs are what we expected
-    row, = l.links['sum_vector'].get_outputs(100)
-    assert row['sum_vector'] == 60.0
+    (row,) = l.links["sum_vector"].get_outputs(100)
+    assert row["sum_vector"] == 60.0
     os.remove("tasks.db")
     os.remove("queues.db")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     test_ioq_simple()
     test_ioq_complex()
